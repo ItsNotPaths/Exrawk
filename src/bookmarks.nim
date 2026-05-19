@@ -206,7 +206,8 @@ proc bookmarksMessage(element: ptr Element, message: Message,
         discard runCommand("focus.files", @[])
       return 1
     elif (code == int(KEYCODE_DELETE) or
-          (k.text != nil and k.textBytes > 0 and k.text[0] == 'd')):
+          (k.text != nil and k.textBytes > 0 and
+           (k.text[0] == 'd' or k.text[0] == 'q'))):
       if n > 0:
         delPath(bm, bm.items[bm.selectedIdx])
       return 1
