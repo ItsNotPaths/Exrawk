@@ -8,8 +8,9 @@
 ## "outbound" import point for higher-level wiring (menubar palette,
 ## bookmarks/preview/theme stubs) without forcing circular imports.
 
-import std/[os, strutils]
-import config, state
+import std/[os, strutils, osproc]
+import rawk_bufferlib
+import config, state, yank
 
 type
   CmdProc* = proc (args: seq[string]) {.closure.}
@@ -34,6 +35,8 @@ var
   previewToggleCb*:  proc() {.closure.}
   themeLoadCb*:      proc(name: string): bool {.closure.}
   openPathCb*:       proc(path: string) {.closure.}
+  focusFilesCb*:     proc() {.closure.}
+  focusBookmarksCb*: proc() {.closure.}
 
 # ---------- registry ----------
 
@@ -150,6 +153,61 @@ proc cmdTheme(args: seq[string]) =
   if themeLoadCb(args[0]):
     config.setConfigKey("theme", args[0])
 
+proc cmdClip(args: seq[string]) =
+  ## Cross-platform clipboard write. Backend is compile-time selected in
+  ## rawk-bufferlib's clipboard module — xclip for the X11 build,
+  ## wl-copy for `-d:wayland`. Same binary works for whichever flavor
+  ## the user shipped.
+  if args.len < 1: return
+  clipboardSetBoth(args.join(" "))
+
+proc cpInto(srcs: seq[string], dest: string) =
+  ## cp -rn each source into dest. `-n` makes immediate-chord paste safe
+  ## against accidental overwrites; users who want overwrite type
+  ## `cp -rf …` in the palette manually.
+  if srcs.len == 0: return
+  var argv = @["-rn", "--"] & srcs & @[dest]
+  try:
+    let p = startProcess("/bin/cp", args = argv,
+                         options = {poParentStreams})
+    let code = waitForExit(p)
+    p.close()
+    if code != 0:
+      stderr.writeLine("[Exrawk] paste exit " & $code)
+  except OSError as e:
+    stderr.writeLine("[Exrawk] paste spawn failed: " & e.msg)
+
+proc cmdPaste(args: seq[string]) =
+  ## Two-tier paste:
+  ##   1. If the yank queue is non-empty, cp each queued path into the
+  ##      active tab's cwd, then clear the queue (yazi semantics).
+  ##   2. Otherwise fall back to a single-shot clipboard read — so a
+  ##      `c-c` → navigate → `c-p` workflow still works without an
+  ##      explicit yank.
+  let t = state.activeTab()
+  let dest = if t == nil: getCurrentDir() else: t.cwd
+  let q = yank.paths()
+  if q.len > 0:
+    stderr.writeLine("[Exrawk] :paste — cp -rn (" & $q.len & " items) -> " & dest)
+    cpInto(q, dest)
+    yank.clear()
+  else:
+    let src = clipboardGet()
+    if src.len == 0:
+      stderr.writeLine("[Exrawk] :paste — yank queue empty + clipboard empty")
+      return
+    stderr.writeLine("[Exrawk] :paste — cp -rn " & src & " -> " & dest)
+    cpInto(@[src], dest)
+  state.refreshActive()
+
+proc cmdYankClear(args: seq[string]) = yank.clear()
+
+proc cmdFocusFiles(args: seq[string]) =
+  if focusFilesCb != nil: focusFilesCb()
+
+proc cmdFocusBookmarks(args: seq[string]) =
+  if focusBookmarksCb != nil: focusBookmarksCb()
+
 proc registerBuiltins*() =
   registerCommand("exit",            cmdExit)
   registerCommand("refresh",         cmdRefresh)
@@ -166,3 +224,8 @@ proc registerBuiltins*() =
   registerCommand("bookmark.del",    cmdBookmarkDel)
   registerCommand("open",            cmdOpen)
   registerCommand("theme",           cmdTheme)
+  registerCommand("clip",            cmdClip)
+  registerCommand("paste",           cmdPaste)
+  registerCommand("yank.clear",      cmdYankClear)
+  registerCommand("focus.files",     cmdFocusFiles)
+  registerCommand("focus.bookmarks", cmdFocusBookmarks)

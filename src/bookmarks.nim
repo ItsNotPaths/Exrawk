@@ -11,7 +11,7 @@
 
 import std/[os, strutils]
 import rawk_luigi, rawk_bufferlib
-import commands, state, config
+import commands, state, config, icons
 
 type
   BookmarksPane* = object
@@ -90,12 +90,15 @@ proc followSelection(bm: ptr BookmarksPane) =
     bm.scrollTop = bm.selectedIdx - vr + 1
   if bm.scrollTop < 0: bm.scrollTop = 0
 
-proc shorten(path: string): string =
-  ## Yazi-style ~ expansion for display only — file format stays absolute.
-  let home = getHomeDir().strip(trailing = true, chars = {'/'})
-  if home.len > 0 and (path == home or path.startsWith(home & "/")):
-    return "~" & path[home.len .. ^1]
-  path
+proc displayName(path: string): string =
+  ## Just the last segment, with a `..` prefix that hints "this is a path,
+  ## not a relative entry". Yazi-style: `~/Downloads` shows as `..Downloads`.
+  ## Root `/` and HOME are special-cased so they're recognizable.
+  let p = path.strip(trailing = true, chars = {'/'})
+  if p.len == 0: return "/"
+  if p == getHomeDir().strip(trailing = true, chars = {'/'}): return "..~"
+  let leaf = p.lastPathPart
+  ".." & leaf
 
 proc isActiveCwd(path: string): bool =
   let t = state.activeTab()
@@ -130,9 +133,23 @@ proc bookmarksMessage(element: ptr Element, message: Message,
         elif isHere: ui.theme.buttonHovered
         else: ui.theme.panel1
       drawBlock(painter, rowRect, bg)
-      let label = " " & shorten(item)
+      # Icon column — reuse the filelist's yazi mapping so bookmarks
+      # styled with category-specific glyphs (Downloads, Desktop, etc.)
+      # pick those up automatically.
+      let (gW, _) = glyphDims()
+      let hint = EntryHint(isDir: true, isLink: false, isExec: false,
+                           name: item.lastPathPart)
+      let rule = lookupRule(hint)
+      let glyphColor = if isSel: ui.theme.textSelected else: rule.color
+      withIconFont:
+        drawGlyphCp(painter, rowRect.l + 6,
+                    rowRect.t + (rh - gW) div 2,
+                    rule.cp, glyphColor)
+      # Just the leaf with a `..` prefix; full path lives on disk.
+      let label = displayName(item)
       let fg = if isSel: ui.theme.textSelected else: ui.theme.text
-      let textRect = Rectangle(l: rowRect.l + 2, r: rowRect.r - 2,
+      let textRect = Rectangle(l: rowRect.l + 6 + gW * 2,
+                               r: rowRect.r - 2,
                                t: rowRect.t, b: rowRect.b)
       drawString(painter, textRect, label.cstring, label.len,
                  fg, cint(ALIGN_LEFT), nil)
@@ -176,7 +193,17 @@ proc bookmarksMessage(element: ptr Element, message: Message,
          code == int(KEYCODE_RIGHT) or
          code == int(KEYCODE_LETTER('L')):
       if n > 0:
-        discard runCommand("cd", @[bm.items[bm.selectedIdx]])
+        let path = bm.items[bm.selectedIdx]
+        if w != nil and w.shift:
+          # Shift+Enter → open in a fresh tab instead of replacing the
+          # current one. Useful when you want to compare two locations
+          # side-by-side via the tab strip.
+          discard runCommand("tab.new", @[path])
+        else:
+          discard runCommand("cd", @[path])
+        # Activating a bookmark is "go look at that folder" — focus
+        # belongs in the file list, not in the picker that triggered it.
+        discard runCommand("focus.files", @[])
       return 1
     elif (code == int(KEYCODE_DELETE) or
           (k.text != nil and k.textBytes > 0 and k.text[0] == 'd')):
@@ -206,6 +233,10 @@ proc bookmarksCreate*(parent: ptr Element, flags: uint32 = 0): ptr BookmarksPane
     if theBookmarks != nil: addPath(theBookmarks, path)
   commands.bookmarkDelCb = proc(path: string) =
     if theBookmarks != nil: delPath(theBookmarks, path)
+  commands.focusBookmarksCb = proc() =
+    if theBookmarks != nil:
+      elementFocus(addr theBookmarks.e)
+      elementRepaint(addr theBookmarks.e, nil)
 
   # Repaint when the active cwd moves (the "you are here" highlight tracks
   # the file list).

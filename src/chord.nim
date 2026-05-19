@@ -21,7 +21,7 @@
 
 import std/os
 import rawk_luigi, rawk_bufferlib
-import state, commands, cldispatch
+import state, commands, cldispatch, yank
 
 type
   ChordKind* = enum ckImmediate, ckInject
@@ -34,17 +34,19 @@ type
   ChordHelp* = object
     e*: Element
 
-const chordTable: array[10, ChordSpec] = [
+const chordTable: array[11, ChordSpec] = [
   ChordSpec(key: 'c', label: "copy path to clipboard",   kind: ckImmediate),
   ChordSpec(key: 'f', label: "copy folder to clipboard", kind: ckImmediate),
   ChordSpec(key: 'b', label: "bookmark this folder",     kind: ckImmediate),
   ChordSpec(key: 'r', label: "refresh listing",          kind: ckImmediate),
   ChordSpec(key: 'h', label: "toggle hidden files",      kind: ckImmediate),
-  ChordSpec(key: 'd', label: "delete  (rm -rf …)",       kind: ckInject),
-  ChordSpec(key: 'y', label: "copy    (cp src dst)",     kind: ckInject),
+  ChordSpec(key: 'y', label: "yank   (ctrl=add, shift+jk extends)",
+                                                         kind: ckImmediate),
+  ChordSpec(key: 'p', label: "paste yanked into cwd",    kind: ckImmediate),
+  ChordSpec(key: 'd', label: "delete  (rm -rf ...)",     kind: ckInject),
   ChordSpec(key: 'x', label: "move    (mv src dst)",     kind: ckInject),
-  ChordSpec(key: 'n', label: "new file   (touch …)",     kind: ckInject),
-  ChordSpec(key: 'N', label: "new dir    (mkdir …)",     kind: ckInject),
+  ChordSpec(key: 'n', label: "new file   (touch ...)",   kind: ckInject),
+  ChordSpec(key: 'N', label: "new dir    (mkdir ...)",   kind: ckInject),
 ]
 
 var
@@ -68,17 +70,21 @@ proc cwdPath(): string =
 proc payloadFor(c: char): string =
   ## Returns the line that would be dispatched (immediate kinds) or
   ## prefilled into the palette (inject kinds). Empty string => no useful
-  ## payload (e.g. nothing selected).
+  ## payload (e.g. nothing selected). Yank ('y') is handled outside this
+  ## table — its dispatch depends on modifiers, not on a static string.
   let selQ = quoteForPalette(selectionPath())
   let cwdQ = quoteForPalette(cwdPath())
   case c
-  of 'c': "wl-copy " & selQ
-  of 'f': "wl-copy " & cwdQ
+  of 'c': "clip " & selQ              # whitelist intercept; uses
+                                      # bufferlib's clipboard (xclip
+                                      # on X11, wl-copy on Wayland)
+  of 'f': "clip " & cwdQ
   of 'b': "bookmark.add"
   of 'r': "refresh"
   of 'h': "hidden.toggle"
+  of 'p': "paste"                     # consumes the yank queue if any,
+                                      # else falls back to clipboard
   of 'd': "rm -rf " & selQ
-  of 'y': "cp " & selQ & " "
   of 'x': "mv " & selQ & " "
   of 'n': "touch "
   of 'N': "mkdir "
@@ -112,10 +118,26 @@ proc exit*() =
   if theHelp != nil and theHelp.e.window != nil:
     elementRepaint(addr theHelp.e, nil)
 
-proc handleFollower*(c: char): bool =
+proc handleFollower*(c: char, shift, ctrl: bool): bool =
   ## Routes the follower keystroke. Returns true if we recognized it (the
   ## filelist should then suppress its normal handling); false otherwise
   ## (caller exits chord mode and lets the key fall through).
+  ##
+  ## The `y` (yank) follower is special-cased because its semantics depend
+  ## on modifiers, not on a static payload string:
+  ##   y          → clear queue, add the selection
+  ##   ctrl+y     → add the selection to the existing queue
+  ##   shift+y    → same as plain — the shift effect kicks in on later
+  ##                navigation keys (filelist extends the queue while
+  ##                shift is held).
+  if c == 'y':
+    let sel = selectionPath()
+    exit()
+    if sel.len == 0: return true
+    if ctrl: yank.add(sel)
+    else:    yank.replaceWith(sel)
+    return true
+
   for spec in chordTable:
     if spec.key != c: continue
     let payload = payloadFor(c)
