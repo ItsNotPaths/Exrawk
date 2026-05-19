@@ -69,17 +69,22 @@ proc spawnDetached(handler, path: string) =
   if pid1 == 0:
     # First child — break out of our session so the grandchild doesn't
     # die with our terminal, then fork the actual handler.
+    #
+    # `posix.exitnow` (= libc `_exit`) is critical here. Nim's `quit`
+    # runs atexit hooks + GC teardown on a process that *inherited* the
+    # parent's heap and wayluigi's open display FD; tearing those down
+    # in the child closes them out from under the parent and freezes
+    # Exrawk's UI. `_exit` skips userland teardown entirely.
     discard setsid()
     let pid2 = fork()
-    if pid2 < 0: quit(127)
-    if pid2 != 0: quit(0)             # first child exits, frees the parent's wait
+    if pid2 < 0: exitnow(127)
+    if pid2 != 0: exitnow(0)
     # Grandchild — exec the handler. PATH lookup via execvp.
     var carr = allocCStringArray(argvSeq)
     discard execvp(tokens[0].cstring, carr)
-    # execvp returned: handler not found or unrunnable. Emit a hint and die.
     stderr.writeLine("[Exrawk] exec failed for " & handler)
     deallocCStringArray(carr)
-    quit(127)
+    exitnow(127)
   # Parent — reap the intermediate child immediately. SIGCHLD stays
   # default so shell.nim's waitForExit isn't disturbed.
   var status: cint

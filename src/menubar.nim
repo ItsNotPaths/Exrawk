@@ -47,7 +47,8 @@ proc menusClose(): bool {.cdecl, importc: "_UIMenusClose".}
 
 # ---------- menu population ----------
 
-proc mkOption(label, cmd: string, args: seq[string] = @[]): MenuOption =
+proc mkOption(label: string, cmd: string = "",
+              args: seq[string] = @[]): MenuOption =
   MenuOption(label: label, command: cmd, args: args)
 
 proc rebuildFileOptions(mb: ptr Menubar) =
@@ -70,7 +71,14 @@ proc rebuildViewOptions(mb: ptr Menubar) =
     mkOption("Sort: Dirs First", "sort", @["dirs-first"]),
     mkOption("Sort: Name",       "sort", @["name"]),
     mkOption("Sort: Mtime",      "sort", @["mtime"]),
+    mkOption("--- Themes ---"),
   ]
+  # Discovered themes (per-user override dir first, then alongside binary).
+  # The currently-active one is marked with a leading `* `; everything else
+  # gets two spaces so the columns line up in monospace.
+  for n in theme.themeNames():
+    let label = if n == theme.activeTheme: "* " & n else: "  " & n
+    mb.items[2].options.add(mkOption(label, "theme", @[n]))
 
 # ---------- runtime helpers ----------
 
