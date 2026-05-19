@@ -60,8 +60,44 @@ proc quoteForPalette*(s: string): string =
     result.add(c)
   result.add('"')
 
-proc clDispatch*(line: string) =
-  let trimmed = line.strip()
+proc splitOnAnd*(s: string): seq[string] =
+  ## Splits `s` on `&&` outside single/double quotes. Each returned segment
+  ## is whitespace-trimmed; empty segments are dropped. Lets the user chain
+  ## registry and shell commands (`cd /tmp && tab.new`) instead of bash
+  ## seeing `tab.new` as a missing binary.
+  result = @[]
+  var cur = ""
+  var inSingle = false
+  var inDouble = false
+  var i = 0
+  while i < s.len:
+    let c = s[i]
+    if inSingle:
+      cur.add(c)
+      if c == '\'': inSingle = false
+      inc i
+    elif inDouble:
+      cur.add(c)
+      if c == '"': inDouble = false
+      elif c == '\\' and i + 1 < s.len:
+        cur.add(s[i + 1]); inc i
+      inc i
+    elif c == '\'':
+      cur.add(c); inSingle = true; inc i
+    elif c == '"':
+      cur.add(c); inDouble = true; inc i
+    elif c == '&' and i + 1 < s.len and s[i + 1] == '&':
+      let t = cur.strip()
+      if t.len > 0: result.add(t)
+      cur = ""
+      i += 2
+    else:
+      cur.add(c); inc i
+  let t = cur.strip()
+  if t.len > 0: result.add(t)
+
+proc dispatchOne(segment: string) =
+  let trimmed = segment.strip()
   if trimmed.len == 0: return
   let parts = splitLineArgs(trimmed)
   if parts.len == 0: return
@@ -73,3 +109,7 @@ proc clDispatch*(line: string) =
   # whitelist-based by design: anything the UI doesn't own state for
   # belongs in bash, not in our registry.
   shell.spawnHere(trimmed)
+
+proc clDispatch*(line: string) =
+  for seg in splitOnAnd(line):
+    dispatchOne(seg)

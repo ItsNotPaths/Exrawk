@@ -85,8 +85,11 @@ let midCol = panelCreate(addr midRight.e, PANEL_GRAY or PANEL_EXPAND)
 discard tabstripCreate(addr midCol.e)
 let fl = filelistCreate(addr midCol.e, ELEMENT_V_FILL or ELEMENT_H_FILL)
 
-# Right — preview pane (rawk-bufferlib editor, read-only by convention).
-discard previewCreate(addr midRight.e)
+# Right — preview pane: title bar + editor stacked vertically inside a
+# panel, mirroring midCol so both columns line up under the same top row.
+let rightCol = panelCreate(addr midRight.e, PANEL_GRAY or PANEL_EXPAND)
+discard previewTitleCreate(addr rightCol.e)
+discard previewCreate(addr rightCol.e)
 
 # Window-level shortcuts.
 windowRegisterShortcut(win, Shortcut(

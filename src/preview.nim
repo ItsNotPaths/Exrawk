@@ -24,7 +24,12 @@ type
     lastKey*:  string                 # (cwd | "@" | selectedName) — change detection
     enabled*:  bool
 
-var thePreview*: Preview
+  PreviewTitle* = object
+    e*: Element
+
+var
+  thePreview*:      Preview
+  thePreviewTitle*: ptr PreviewTitle
 
 const
   sniffBytes  = 4096
@@ -132,6 +137,43 @@ proc previewSetEnabled*(p: var Preview, on: bool) =
   elif p.ed != nil:
     editorOpenSynthetic(p.ed, "preview://off", "[preview off]")
     reapInactive(p.ed)
+
+proc previewTitleHeight*(): cint =
+  ## Matches tabs.stripHeight() so the preview title bar sits at the same
+  ## vertical level as the file list's tab strip on the left.
+  let (_, gH) = glyphDims()
+  gH + 4
+
+proc previewTitleText(): string =
+  ## Basename of the entry currently selected in the active tab. Empty when
+  ## the tab is empty (e.g. unreadable cwd).
+  let t = state.activeTab()
+  if t == nil or t.entries.len == 0: return ""
+  t.entries[t.selectedIdx].name
+
+proc previewTitleMessage(element: ptr Element, message: Message,
+                         di: cint, dp: pointer): cint {.cdecl.} =
+  if message == msgGetHeight:
+    return previewTitleHeight()
+  elif message == msgPaint:
+    let painter = cast[ptr Painter](dp)
+    drawBlock(painter, element.bounds, ui.theme.panel2)
+    let txt = previewTitleText()
+    if txt.len > 0:
+      drawString(painter, element.bounds, txt.cstring, txt.len,
+                 ui.theme.text, cint(ALIGN_CENTER), nil)
+    return 1
+  return 0
+
+proc previewTitleCreate*(parent: ptr Element): ptr PreviewTitle =
+  let e = elementCreate(csize_t(sizeof(PreviewTitle)), parent, 0,
+                        previewTitleMessage, "PreviewTitle")
+  let t = cast[ptr PreviewTitle](e)
+  thePreviewTitle = t
+  state.subscribe(proc() =
+    if thePreviewTitle != nil and thePreviewTitle.e.window != nil:
+      elementRepaint(addr thePreviewTitle.e, nil))
+  return t
 
 proc previewCreate*(parent: ptr Element): ptr Editor =
   ## Returns the underlying editor so callers can position / size it.
