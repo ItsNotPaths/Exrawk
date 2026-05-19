@@ -1,0 +1,178 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        type: string
+      notes:
+        description: 'Release notes / body'
+        required: false
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  PROJECT_NAME: Exrawk
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: x11
+            bin: Exrawk
+            nim_define: ''                          # default backend = UI_LINUX
+            apt_packages: 'libx11-dev libfreetype-dev fontconfig'
+          - flavor: wayland
+            bin: Exrawk-wayland
+            nim_define: '-d:wayland'                # → UI_WAYLAND in rawk_luigi
+            apt_packages: 'libwayland-dev libxkbcommon-dev libfreetype-dev fontconfig'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.0.x'
+          # setup-nim-action@v2 hits the GitHub API to resolve the version
+          # range. Pass GITHUB_TOKEN so the request is authenticated and
+          # doesn't get throttled to the 60/hr anonymous rate limit (which
+          # silently degrades into a "tar: This does not look like a tar
+          # archive" further down the install script).
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve dep HEADs
+        # Cache key alone (download-deps.sh hash) doesn't change when our
+        # vendored repos move forward, which would bake stale wayluigi into
+        # a release. Hash the remote HEADs into the key so any dep update
+        # invalidates the cache and triggers a fresh fetch.
+        id: dep-heads
+        run: |
+          luigi_sha=$(git ls-remote https://github.com/ItsNotPaths/wayluigi.git HEAD | cut -f1)
+          rl_sha=$(git ls-remote https://github.com/ItsNotPaths/rawk-luigi.git HEAD | cut -f1)
+          rb_sha=$(git ls-remote https://github.com/ItsNotPaths/rawk-bufferlib.git HEAD | cut -f1)
+          echo "key=${luigi_sha:0:12}-${rl_sha:0:12}-${rb_sha:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache vendor/
+        uses: actions/cache@v5
+        with:
+          path: vendor
+          key: vendor-linux-${{ hashFiles('download-deps.sh') }}-${{ steps.dep-heads.outputs.key }}
+
+      - name: Download deps
+        # Must run AFTER toolchain install: download-deps.sh invokes
+        # `nimble develop` + `nimble setup` to wire rawk-luigi/rawk-bufferlib
+        # paths into config.nims so plain `nim c` finds them. nimble setup
+        # also resolves parsetoml from the registry.
+        run: |
+          chmod +x ./download-deps.sh
+          ./download-deps.sh
+
+      - name: Install ${{ matrix.flavor }} dev headers
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt_packages }}
+
+      - name: Install freetype Nim package
+        run: nimble install -y freetype@0.1.2
+
+      - name: Build (${{ matrix.flavor }})
+        # Mirrors release.sh's --local flag set. Keep these in sync — the
+        # public artifact must be the same shape developers test against.
+        run: |
+          nim c --opt:size -d:danger -d:strip -d:lto \
+                -d:noSignalHandler \
+                --threads:off --panics:on \
+                --stackTrace:off --lineTrace:off \
+                ${{ matrix.nim_define }} \
+                --passC:-fno-pie --passL:-no-pie \
+                --passC:-ffunction-sections --passC:-fdata-sections \
+                --passC:-fno-asynchronous-unwind-tables \
+                --passC:-fno-unwind-tables \
+                --passC:-fno-stack-protector \
+                --passL:-Wl,--gc-sections \
+                --passL:-Wl,--build-id=none \
+                --passL:-Wl,-z,norelro \
+                --out:"${{ matrix.bin }}" "src/${PROJECT_NAME}.nim"
+          strip --strip-all "${{ matrix.bin }}" || true
+
+      - name: Size guard (<=600 KB)
+        # parsetoml adds ~50 KB on top of rawk-luigi+bufferlib's baseline;
+        # 600 KB gives the icon table + themes room to grow before the
+        # build alerts us.
+        run: |
+          BYTES=$(stat -c%s "${{ matrix.bin }}")
+          echo "binary size: ${BYTES}"
+          if [ "$BYTES" -gt 614400 ]; then
+            echo "binary exceeds 600 KB budget (${BYTES} > 614400)" >&2
+            exit 1
+          fi
+
+      - name: Stage artifacts
+        # Bundle every runtime asset the binary expects to find via
+        # getAppDir(): themes/, yazi-icons.toml (flattened from vendor/),
+        # README, license file.
+        run: |
+          mkdir -p dist
+          cp "${{ matrix.bin }}" dist/
+          [ -f README.md ]     && cp README.md     dist/ || true
+          [ -f LICENSE ]       && cp LICENSE       dist/ || true
+          [ -f LICENSE.txt ]   && cp LICENSE.txt   dist/ || true
+          [ -f gpl-3.0.txt ]   && cp gpl-3.0.txt   dist/ || true
+          [ -d themes ]        && cp -R themes     dist/ || true
+          if [ -f vendor/yazi-icons.toml ]; then
+            cp vendor/yazi-icons.toml dist/yazi-icons.toml
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.flavor }}
+          path: dist
+
+  release:
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-x11
+          path: linux-x11
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-wayland
+          path: linux-wayland
+
+      - name: Package
+        run: |
+          # actions/upload-artifact strips the exec bit on file upload, so
+          # the downloaded trees come back mode 644. Restore +x on the
+          # binaries before zipping or users get 126 (Permission denied)
+          # on launch.
+          chmod +x "linux-x11/${PROJECT_NAME}" "linux-wayland/${PROJECT_NAME}-wayland"
+          (cd linux-x11     && zip -r "../${PROJECT_NAME}-linux-x11.zip"     .)
+          (cd linux-wayland && zip -r "../${PROJECT_NAME}-linux-wayland.zip" .)
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "${{ inputs.version }}" \
+              "${PROJECT_NAME}-linux-x11.zip" \
+              "${PROJECT_NAME}-linux-wayland.zip" \
+              --repo "${{ github.repository }}" \
+              --title "${{ inputs.version }}" \
+              --notes "${{ inputs.notes }}" \
+              $PRERELEASE_FLAG
