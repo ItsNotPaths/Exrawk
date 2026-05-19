@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "includes": [],
-  "dependencies": [
-    "/home/paths/projects/Exrawk/vendor/rawk-luigi",
-    "/home/paths/projects/Exrawk/vendor/rawk-bufferlib"
-  ]
-}
