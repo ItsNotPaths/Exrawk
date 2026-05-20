@@ -3,6 +3,9 @@
 wayluigi-based file explorer. Yazi-style three-panel UX, rawk conventions,
 shared command-line. Linux x86_64.
 
+![Exrawk three-panel file explorer](https://files.paths.place/exrawk-1.png)
+![Exrawk with the preview pane and command palette](https://files.paths.place/exrawk-2.png)
+
 ## Layout
 
 ```
