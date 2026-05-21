@@ -10,7 +10,7 @@
 
 import std/os
 import rawk_luigi, rawk_bufferlib
-import state, commands, icons, althints, yank
+import state, commands, icons, althints, yank, dialog
 
 type
   FileList* = object
@@ -165,6 +165,10 @@ proc filelistMessage(element: ptr Element, message: Message,
     let w = element.window
     if w != nil and w.alt: return 0     # Alt+x belongs to window shortcuts
     let code = k.code
+    # In picker mode Esc aborts the dialog (exit 1). Normal mode has no Esc
+    # binding here, so this only fires when dialog.active().
+    if dialog.active() and code == int(KEYCODE_ESCAPE):
+      dialog.cancel()                   # quits 1; never returns
     let t = state.activeTab()
     if t == nil: return 0
 

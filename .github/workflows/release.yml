@@ -102,6 +102,17 @@ jobs:
                 --out:"${{ matrix.bin }}" "src/${PROJECT_NAME}.nim"
           strip --strip-all "${{ matrix.bin }}" || true
 
+      - name: Build portal daemon
+        # Backend-agnostic, binds basu at runtime via {.dynlib.}, imports only
+        # the Nim stdlib — so it needs no extra headers and builds once (on the
+        # wayland leg). Carried in the wayland artifact for the release job.
+        if: matrix.flavor == 'wayland'
+        run: |
+          nim c --opt:size -d:danger -d:strip -d:lto -d:noSignalHandler \
+                --threads:off --panics:on --stackTrace:off --lineTrace:off \
+                --out:exrawk-portal "src/exrawk_portal.nim"
+          strip --strip-all exrawk-portal || true
+
       - name: Size guard (<=600 KB)
         # parsetoml adds ~50 KB on top of rawk-luigi+bufferlib's baseline;
         # 600 KB gives the icon table + themes room to grow before the
@@ -128,6 +139,11 @@ jobs:
           [ -d themes ]        && cp -R themes     dist/ || true
           if [ -f vendor/yazi-icons.toml ]; then
             cp vendor/yazi-icons.toml dist/yazi-icons.toml
+          fi
+          # The portal daemon + glue ride along on the wayland leg only.
+          if [ "${{ matrix.flavor }}" = "wayland" ]; then
+            cp exrawk-portal dist/
+            mkdir -p dist/portal && cp contrib/portal/* dist/portal/
           fi
 
       - uses: actions/upload-artifact@v7
@@ -161,6 +177,22 @@ jobs:
           (cd linux-x11     && zip -r "../${PROJECT_NAME}-linux-x11.zip"     .)
           (cd linux-wayland && zip -r "../${PROJECT_NAME}-linux-wayland.zip" .)
 
+          # Combined install tarball consumed by the Void xbps template:
+          # both GUI flavors + the portal daemon + assets + portal glue.
+          VER="${{ inputs.version }}"; VER="${VER#v}"
+          mkdir -p bundle/portal
+          cp "linux-x11/${PROJECT_NAME}"               bundle/
+          cp "linux-wayland/${PROJECT_NAME}-wayland"   bundle/
+          cp "linux-wayland/exrawk-portal"             bundle/
+          cp -R "linux-wayland/themes"                 bundle/ 2>/dev/null || true
+          cp "linux-wayland/yazi-icons.toml"           bundle/ 2>/dev/null || true
+          cp "linux-wayland/portal/." bundle/portal/   -R
+          for f in README.md LICENSE LICENSE.txt gpl-3.0.txt; do
+            [ -f "linux-wayland/$f" ] && cp "linux-wayland/$f" bundle/ || true
+          done
+          chmod +x bundle/${PROJECT_NAME} bundle/${PROJECT_NAME}-wayland bundle/exrawk-portal
+          tar -C bundle -cJf "${PROJECT_NAME}-${VER}-linux.tar.xz" .
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -169,9 +201,11 @@ jobs:
           if [ "${{ inputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          VER="${{ inputs.version }}"; VER="${VER#v}"
           gh release create "${{ inputs.version }}" \
               "${PROJECT_NAME}-linux-x11.zip" \
               "${PROJECT_NAME}-linux-wayland.zip" \
+              "${PROJECT_NAME}-${VER}-linux.tar.xz" \
               --repo "${{ github.repository }}" \
               --title "${{ inputs.version }}" \
               --notes "${{ inputs.notes }}" \

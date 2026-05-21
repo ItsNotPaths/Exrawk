@@ -81,8 +81,31 @@ if [ $DO_LOCAL -eq 1 ]; then
                 --out:"$out" "src/${PROJECT_NAME}.nim" )
     }
 
+    # The portal daemon is backend-agnostic (no rawk_luigi import) and binds
+    # basu at runtime via {.dynlib.}, so it needs no X11/Wayland/basu headers
+    # — just nim + std. One binary serves both GUI flavors.
+    build_portal() {
+        local out="$1"
+        ( cd "$PROJECT_DIR" && \
+          nim c --opt:size -d:danger -d:strip -d:lto \
+                -d:noSignalHandler \
+                --threads:off --panics:on \
+                --stackTrace:off --lineTrace:off \
+                --passC:-fno-pie --passL:-no-pie \
+                --passC:-ffunction-sections --passC:-fdata-sections \
+                --passC:-fno-asynchronous-unwind-tables \
+                --passC:-fno-unwind-tables \
+                --passC:-fno-stack-protector \
+                --passL:-Wl,--gc-sections \
+                --passL:-Wl,--build-id=none \
+                --passL:-Wl,-z,norelro \
+                --nimcache:"$RELEASE_DIR/.nimcache-$(basename "$out")" \
+                --out:"$out" "src/exrawk_portal.nim" )
+    }
+
     BIN_X11="$RELEASE_DIR/$PROJECT_NAME"
     BIN_WL="$RELEASE_DIR/${PROJECT_NAME}-wayland"
+    BIN_PORTAL="$RELEASE_DIR/exrawk-portal"
 
     # Detect which backends the host can actually compile against; the
     # public CI image has both, but a wayland-only dev box won't have
@@ -106,6 +129,8 @@ if [ $DO_LOCAL -eq 1 ]; then
     else
         echo "  -> Wayland skipped (wayland-client headers not found)"
     fi
+    echo "  -> portal daemon build"
+    build_portal "$BIN_PORTAL"
 
     # Bundle runtime assets next to the binary. iconsPath()/themeDirs()
     # both check getAppDir() so this layout works without a config tweak.
@@ -122,10 +147,18 @@ if [ $DO_LOCAL -eq 1 ]; then
         # builds. Either way the file ends up findable.
         cp -f "$PROJECT_DIR/vendor/yazi-icons.toml" "$RELEASE_DIR/yazi-icons.toml"
     fi
+    # XDG portal integration files (the .portal/.service/.conf the Void
+    # package drops into system paths). Shipped verbatim so the packaging
+    # template can install them straight out of the bundle.
+    if [ -d "$PROJECT_DIR/contrib/portal" ]; then
+        rm -rf "$RELEASE_DIR/portal"
+        cp -R "$PROJECT_DIR/contrib/portal" "$RELEASE_DIR/portal"
+    fi
 
     echo "==> Local done:"
-    [ -f "$BIN_X11" ] && echo "    $BIN_X11 ($(du -h "$BIN_X11" | cut -f1))"
-    [ -f "$BIN_WL"  ] && echo "    $BIN_WL  ($(du -h "$BIN_WL"  | cut -f1))"
+    [ -f "$BIN_X11" ]    && echo "    $BIN_X11 ($(du -h "$BIN_X11" | cut -f1))"
+    [ -f "$BIN_WL"  ]    && echo "    $BIN_WL  ($(du -h "$BIN_WL"  | cut -f1))"
+    [ -f "$BIN_PORTAL" ] && echo "    $BIN_PORTAL ($(du -h "$BIN_PORTAL" | cut -f1))"
 fi
 
 if [ $DO_PUBLIC -eq 1 ]; then

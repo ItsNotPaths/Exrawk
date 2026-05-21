@@ -10,7 +10,7 @@
 
 import std/strutils
 import rawk_luigi, rawk_bufferlib
-import commands, cldispatch, theme, althints
+import commands, cldispatch, theme, althints, dialog
 
 type
   MenuOption = object
@@ -36,6 +36,11 @@ type
     history:      seq[string]
     histIdx:      int     # -1 at live buffer, else index in history
     histDraft:    string  # live buffer stashed when walking back
+    # Dialog-mode confirm/cancel buttons (painted far-right only when
+    # dialog.active()). x is relative to bounds.l, mirroring items[i].x/.w;
+    # both stay 0 outside dialog mode so the hit-tests never match.
+    dlgSubmitX, dlgSubmitW: cint
+    dlgCancelX, dlgCancelW: cint
 
 var theMenubar*: ptr Menubar
 
@@ -327,6 +332,29 @@ proc menubarMessage(element: ptr Element, message: Message,
       mb.items[i].x = x - element.bounds.l
       mb.items[i].w = w
       x += w
+    if dialog.active():
+      # Far-right submit + a Cancel to its left. Submit gets the hovered
+      # button tint so it reads as the primary action; Cancel sits flat.
+      let sLabel = dialog.submitLabel()
+      let cLabel = "Cancel"
+      let sW = measureStringWidth(sLabel.cstring) + 2 * padX
+      let cW = measureStringWidth(cLabel.cstring) + 2 * padX
+      let sX = element.bounds.r - sW
+      let cX = sX - cW
+      let sRect = Rectangle(l: sX, r: sX + sW,
+                            t: element.bounds.t, b: element.bounds.b)
+      let cRect = Rectangle(l: cX, r: cX + cW,
+                            t: element.bounds.t, b: element.bounds.b)
+      drawBlock(painter, sRect, ui.theme.buttonHovered)
+      drawString(painter, sRect, sLabel.cstring, -1,
+                 ui.theme.text, cint(ALIGN_CENTER), nil)
+      drawBlock(painter, cRect, ui.theme.panel2)
+      drawString(painter, cRect, cLabel.cstring, -1,
+                 ui.theme.text, cint(ALIGN_CENTER), nil)
+      mb.dlgSubmitX = sX - element.bounds.l
+      mb.dlgSubmitW = sW
+      mb.dlgCancelX = cX - element.bounds.l
+      mb.dlgCancelW = cW
     return 1
 
   elif message == msgKeyTyped:
@@ -408,6 +436,18 @@ proc menubarMessage(element: ptr Element, message: Message,
       # mouse is out of scope until we measure glyph offsets.
       return 1
     let lx = w.cursorX - element.bounds.l
+    if dialog.active():
+      if lx >= mb.dlgSubmitX and lx < mb.dlgSubmitX + mb.dlgSubmitW:
+        if dialog.mode == dmSave:
+          # Surface `:confirm <name>` prefilled (red injected border) so the
+          # user names the file before Enter dispatches it.
+          openPaletteWith("confirm " & dialog.suggestName)
+        else:
+          discard runCommand("confirm")
+        return 1
+      if lx >= mb.dlgCancelX and lx < mb.dlgCancelX + mb.dlgCancelW:
+        discard runCommand("cancel")
+        return 1
     let h = hitItem(mb, lx)
     if h < 0: return 0
     spawnMenu(mb, h)

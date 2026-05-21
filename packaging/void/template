@@ -1,0 +1,59 @@
+# Template file for 'Exrawk'
+#
+# -bin style: installs the prebuilt GitHub release tarball rather than building
+# from source. A from-source Void build would need network access at build time
+# (download-deps.sh fetches the vendored wayluigi/rawk-* git repos and nimble
+# pulls parsetoml), which the xbps-src sandbox disallows.
+#
+# Drop this into your overlay as srcpkgs/Exrawk/template, set `checksum` to the
+# released tarball's sha256 (xgensum -f after bumping `version`), then build:
+#   ./xbps-src pkg Exrawk
+pkgname=Exrawk
+version=1.0.0
+revision=1
+archs="x86_64"
+create_wrksrc=yes
+short_desc="Yazi-style file explorer + XDG file-chooser portal (rawk suite)"
+maintainer="Paths <IsItPaths@gmail.com>"
+license="GPL-3.0-only"
+homepage="https://github.com/ItsNotPaths/Exrawk"
+distfiles="${homepage}/releases/download/v${version}/Exrawk-${version}-linux.tar.xz"
+checksum=0000000000000000000000000000000000000000000000000000000000000000
+
+# Prebuilt binaries: skip the shlib rdep scan and name runtime deps directly.
+# basu is dlopen()'d by the daemon (not in ELF NEEDED), so it must be listed.
+noverifyrdeps=yes
+nostrip=yes
+depends="xdg-desktop-portal dbus basu fontconfig"
+
+conf_files="/etc/xdg-desktop-portal/portals.conf"
+
+do_install() {
+	# Self-contained app bundle under /opt, matching the rest of the rawk
+	# suite. getAppDir() resolves through the /usr/bin symlinks back to here,
+	# so themes/ and yazi-icons.toml are found with no config tweak.
+	vmkdir opt/Exrawk
+	install -m755 Exrawk Exrawk-wayland exrawk-portal "${DESTDIR}/opt/Exrawk/"
+	vcopy themes opt/Exrawk
+	install -m644 yazi-icons.toml "${DESTDIR}/opt/Exrawk/"
+
+	# PATH entry points.
+	vmkdir usr/bin
+	ln -sf /opt/Exrawk/Exrawk         "${DESTDIR}/usr/bin/Exrawk"
+	ln -sf /opt/Exrawk/Exrawk-wayland "${DESTDIR}/usr/bin/Exrawk-wayland"
+
+	# XDG portal backend registration.
+	vinstall portal/exrawk.portal 644 usr/share/xdg-desktop-portal/portals
+	vinstall portal/org.freedesktop.impl.portal.desktop.exrawk.service \
+		644 usr/share/dbus-1/services
+
+	# System-wide FileChooser default. Admin-level (/etc) so it overrides
+	# without colliding with xdg-desktop-portal's own /usr/share/portals.conf.
+	vinstall portal/portals.conf 644 etc/xdg-desktop-portal
+
+	if [ -f gpl-3.0.txt ]; then
+		vlicense gpl-3.0.txt LICENSE
+	elif [ -f LICENSE ]; then
+		vlicense LICENSE
+	fi
+}

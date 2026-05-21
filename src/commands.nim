@@ -10,7 +10,7 @@
 
 import std/[os, strutils, osproc]
 import rawk_bufferlib
-import config, state, yank
+import config, state, yank, dialog
 
 type
   CmdProc* = proc (args: seq[string]) {.closure.}
@@ -255,3 +255,8 @@ proc registerBuiltins*() =
   registerCommand("yank.clear",      cmdYankClear)
   registerCommand("focus.files",     cmdFocusFiles)
   registerCommand("focus.bookmarks", cmdFocusBookmarks)
+  # Dialog/picker commands — no-ops outside `--dialog` mode except `:select`,
+  # which mirrors the Alt+Y replace-yank and is harmless in normal use.
+  registerCommand("select",          proc(a: seq[string]) = dialog.select())
+  registerCommand("confirm",         proc(a: seq[string]) = dialog.confirm(a.join(" ")))
+  registerCommand("cancel",          proc(a: seq[string]) = dialog.cancel())

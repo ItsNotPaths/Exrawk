@@ -11,23 +11,59 @@
 ## Hotkeys are thin wrappers around the commands registry: every action
 ## a hotkey performs is also typeable in the palette (and vice-versa).
 
-import std/os
+import std/[os, strutils]
 import rawk_luigi, rawk_bufferlib
-import config, state, filelist, tabs, commands, cldispatch, menubar, bookmarks, preview, opener, icons, althints, yank, theme
+import config, state, filelist, tabs, commands, cldispatch, menubar, bookmarks, preview, opener, icons, althints, yank, theme, dialog
 
 # ---------- argv ----------
+#
+# Plain `Exrawk [path]` opens the explorer at a directory. The `--dialog`
+# flags turn it into a system file picker (see dialog.nim): the chosen
+# path(s) print to stdout and the process exits 0/1. Manual loop over
+# commandLineParams() — keeps the no-flag positional-path path identical to
+# the original behavior.
 
-var startDir*: string
+var
+  startDir*:   string
+  winTitle*:   string = "Exrawk"
 
 proc resolveArgv() =
-  if paramCount() == 0:
-    startDir = getCurrentDir()
-    return
-  let arg = paramStr(1)
-  if dirExists(arg):
-    startDir = absolutePath(arg)
-  elif fileExists(arg):
-    startDir = absolutePath(arg.parentDir)
+  var positional = ""
+  let params = commandLineParams()
+  var i = 0
+  while i < params.len:
+    let a = params[i]
+    case a
+    of "--dialog":
+      if i + 1 < params.len:
+        inc i
+        dialog.mode =
+          case params[i]
+          of "open":  dmOpenFile
+          of "multi": dmOpenMulti
+          of "dir":   dmOpenDir
+          of "save":  dmSave
+          else:       dmNone
+    of "--name":
+      if i + 1 < params.len:
+        inc i
+        dialog.suggestName = params[i]
+    of "--title":
+      if i + 1 < params.len:
+        inc i
+        winTitle = params[i]
+    else:
+      if positional.len == 0 and not a.startsWith("--"): positional = a
+    inc i
+
+  # Start dir: an explicit positional wins; otherwise a save prefill that is
+  # an absolute path seeds the directory from its parent; else cwd.
+  if positional.len > 0 and dirExists(positional):
+    startDir = absolutePath(positional)
+  elif positional.len > 0 and fileExists(positional):
+    startDir = absolutePath(positional.parentDir)
+  elif dialog.mode == dmSave and dialog.suggestName.isAbsolute:
+    startDir = dialog.suggestName.parentDir
   else:
     startDir = getCurrentDir()
 
@@ -116,7 +152,7 @@ openerInstall()
 discard state.newTab(startDir)
 state.setActive(0)
 
-let win = windowCreate(nil, 0, "Exrawk", 1100, 700)
+let win = windowCreate(nil, 0, winTitle.cstring, 1100, 700)
 let root = panelCreate(addr win.e, PANEL_GRAY or PANEL_EXPAND)
 
 let mb = menubarCreate(addr root.e)
@@ -210,4 +246,9 @@ windowRegisterShortcut(win, Shortcut(
 win.e.messageUser = onWinMsg
 
 elementFocus(addr fl.e)
-quit messageLoop()
+
+# A `:confirm` quits 0 from inside the loop and never returns here. Reaching
+# this point in dialog mode means the window was closed without confirming —
+# treat it as a cancel (exit 1), matching Esc / the Cancel button.
+let rc = messageLoop()
+if dialog.active(): quit(1) else: quit(rc)
