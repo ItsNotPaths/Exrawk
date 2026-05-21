@@ -11,7 +11,7 @@
 
 import std/[os, strutils]
 import rawk_luigi, rawk_bufferlib
-import commands, state, config, icons
+import commands, state, config, icons, althints
 
 type
   BookmarksPane* = object
@@ -174,6 +174,12 @@ proc bookmarksMessage(element: ptr Element, message: Message,
     clampScroll(bm)
     elementRepaint(element, nil)
     return 1
+
+  elif message == msgMouseMove:
+    # Catch Alt-release while the cursor is over the bookmarks pane (luigi
+    # mouse-moves the hovered element on each modifier transition).
+    althints.reconcile(element.window)
+    return 0
 
   elif message == msgKeyTyped:
     let k = cast[ptr KeyTyped](dp)

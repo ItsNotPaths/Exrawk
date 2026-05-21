@@ -10,7 +10,7 @@
 
 import std/strutils
 import rawk_luigi, rawk_bufferlib
-import commands, cldispatch, theme
+import commands, cldispatch, theme, althints
 
 type
   MenuOption = object
@@ -388,6 +388,8 @@ proc menubarMessage(element: ptr Element, message: Message,
     return 1
 
   elif message == msgMouseMove:
+    # Keep the alt-hints reveal in sync if Alt is released over the menubar.
+    althints.reconcile(element.window)
     if mb.palette: return 0
     let w = element.window
     if w != nil:

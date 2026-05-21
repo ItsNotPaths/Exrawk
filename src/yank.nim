@@ -1,6 +1,6 @@
 ## Yank queue — global (not per-tab) ordered set of file paths queued for
-## paste. Populated by the c-y chord (plain / ctrl-additive) and by
-## shift-held cursor moves in the file list; consumed by `:paste`.
+## paste. Populated by the Alt+Y / Alt+Shift+Y actions (replace / add) and
+## by shift-held cursor moves in the file list; consumed by `:paste`.
 ##
 ## Persists across cwd changes — the whole point is "yank here, paste
 ## somewhere else". Cleared on explicit replace, on paste-completed, or

@@ -200,6 +200,31 @@ proc cmdPaste(args: seq[string]) =
     cpInto(@[src], dest)
   state.refreshActive()
 
+proc cmdNew(args: seq[string]) =
+  ## :new <name> — create an entry in the active dir. A trailing slash makes
+  ## it a directory; otherwise a file (test.py → file, test.py/ → folder).
+  ## Intermediate dirs in a nested name are created along the way. No-op on
+  ## an empty name; never clobbers an existing file.
+  if args.len == 0: return
+  let t = state.activeTab()
+  if t == nil: return
+  let raw = args.join(" ").strip()
+  if raw.len == 0: return
+  let isDir = raw.endsWith("/")
+  let name  = if isDir: raw.strip(leading = false, chars = {'/'}) else: raw
+  if name.len == 0: return
+  let path = if isAbsolute(name): name else: t.cwd / name
+  try:
+    if isDir:
+      createDir(path)
+    else:
+      if path.parentDir.len > 0: createDir(path.parentDir)
+      if not fileExists(path): writeFile(path, "")
+  except OSError, IOError:
+    stderr.writeLine("[Exrawk] :new failed: " & getCurrentExceptionMsg())
+    return
+  state.refreshActive()
+
 proc cmdYankClear(args: seq[string]) = yank.clear()
 
 proc cmdFocusFiles(args: seq[string]) =
@@ -226,6 +251,7 @@ proc registerBuiltins*() =
   registerCommand("theme",           cmdTheme)
   registerCommand("clip",            cmdClip)
   registerCommand("paste",           cmdPaste)
+  registerCommand("new",             cmdNew)
   registerCommand("yank.clear",      cmdYankClear)
   registerCommand("focus.files",     cmdFocusFiles)
   registerCommand("focus.bookmarks", cmdFocusBookmarks)

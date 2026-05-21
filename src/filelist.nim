@@ -10,7 +10,7 @@
 
 import std/os
 import rawk_luigi, rawk_bufferlib
-import state, commands, icons, chord, yank
+import state, commands, icons, althints, yank
 
 type
   FileList* = object
@@ -154,6 +154,12 @@ proc filelistMessage(element: ptr Element, message: Message,
       elementRepaint(element, nil)
     return 1
 
+  elif message == msgMouseMove:
+    # Alt press/release fires a mouse-move to the hovered element; keep the
+    # alt-hints reveal in sync whenever the cursor rests over the file list.
+    althints.reconcile(element.window)
+    return 0
+
   elif message == msgKeyTyped:
     let k = cast[ptr KeyTyped](dp)
     let w = element.window
@@ -163,38 +169,9 @@ proc filelistMessage(element: ptr Element, message: Message,
     if t == nil: return 0
 
     let shift = w != nil and w.shift
-    let ctrl  = w != nil and w.ctrl
 
-    # Chord-leader takes precedence. When active the next keystroke is
-    # the follower; recognized → consumed, unrecognized → exit chord and
-    # let the rest of this handler process the key (so `c b` exits chord
-    # AND jumps focus to bookmarks instead of swallowing the b).
-    if chord.active:
-      if code == int(KEYCODE_ESCAPE):
-        chord.exit()
-        elementRepaint(element, nil)
-        return 1
-      if k.text != nil and k.textBytes > 0:
-        if chord.handleFollower(k.text[0], shift, ctrl):
-          elementRepaint(element, nil)
-          return 1
-        chord.exit()
-        elementRepaint(element, nil)
-        # fall through — this key now hits the normal bindings below
-      else:
-        chord.exit()
-        elementRepaint(element, nil)
-        return 1
-
-    # `c` (bare, no modifier) enters chord mode. The bookmarks pane swaps
-    # to the chord-help element on the left.
-    if k.text != nil and k.textBytes > 0 and k.text[0] == 'c':
-      chord.enter()
-      elementRepaint(element, nil)
-      return 1
-
-    # `b` → focus the bookmarks pane. (Adding a bookmark goes through the
-    # chord-leader: c-b.)
+    # `b` → focus the bookmarks pane. (Bookmarking the current dir is the
+    # Alt+B action, surfaced in the alt-hints reveal.)
     if k.text != nil and k.textBytes > 0 and k.text[0] == 'b':
       discard runCommand("focus.bookmarks", @[])
       return 1
@@ -229,9 +206,13 @@ proc filelistMessage(element: ptr Element, message: Message,
     if t.selectedIdx != prevSel:
       state.notify()
       # Shift held during a cursor move = yank multiselect. Extends the
-      # queue with the new selection; releasing shift returns to plain
-      # navigation. Yazi-style range-yank.
+      # queue with both the row we left (the anchor — previously omitted,
+      # so a sweep dropped its starting row) and the row we landed on, so
+      # the queue covers the full contiguous block. yank.add is idempotent,
+      # so re-adding the anchor on each step is free. Yazi-style range-yank.
       if shift and t.entries.len > 0:
+        if prevSel >= 0 and prevSel < t.entries.len:
+          yank.add(t.cwd / t.entries[prevSel].name)
         yank.add(t.cwd / t.entries[t.selectedIdx].name)
     elementRepaint(element, nil)
     return 1
