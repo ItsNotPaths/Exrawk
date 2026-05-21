@@ -168,30 +168,45 @@ jobs:
           path: linux-wayland
 
       - name: Package
+        # Four install tarballs — a full bundle (GUI + portal daemon + glue)
+        # and an application-only bundle for each backend. The daemon is
+        # backend-agnostic, so both -full bundles reuse the one exrawk-portal
+        # built on the wayland leg.
         run: |
-          # actions/upload-artifact strips the exec bit on file upload, so
-          # the downloaded trees come back mode 644. Restore +x on the
-          # binaries before zipping or users get 126 (Permission denied)
-          # on launch.
-          chmod +x "linux-x11/${PROJECT_NAME}" "linux-wayland/${PROJECT_NAME}-wayland"
-          (cd linux-x11     && zip -r "../${PROJECT_NAME}-linux-x11.zip"     .)
-          (cd linux-wayland && zip -r "../${PROJECT_NAME}-linux-wayland.zip" .)
-
-          # Combined install tarball consumed by the Void xbps template:
-          # both GUI flavors + the portal daemon + assets + portal glue.
           VER="${{ inputs.version }}"; VER="${VER#v}"
-          mkdir -p bundle/portal
-          cp "linux-x11/${PROJECT_NAME}"               bundle/
-          cp "linux-wayland/${PROJECT_NAME}-wayland"   bundle/
-          cp "linux-wayland/exrawk-portal"             bundle/
-          cp -R "linux-wayland/themes"                 bundle/ 2>/dev/null || true
-          cp "linux-wayland/yazi-icons.toml"           bundle/ 2>/dev/null || true
-          cp "linux-wayland/portal/." bundle/portal/   -R
-          for f in README.md LICENSE LICENSE.txt gpl-3.0.txt; do
-            [ -f "linux-wayland/$f" ] && cp "linux-wayland/$f" bundle/ || true
-          done
-          chmod +x bundle/${PROJECT_NAME} bundle/${PROJECT_NAME}-wayland bundle/exrawk-portal
-          tar -C bundle -cJf "${PROJECT_NAME}-${VER}-linux.tar.xz" .
+          N="${PROJECT_NAME}"
+
+          # upload-artifact drops the exec bit; restore it on every binary.
+          chmod +x "linux-x11/$N" "linux-wayland/$N-wayland" "linux-wayland/exrawk-portal"
+
+          # add the shared runtime assets (themes/icons/docs) from <leg> into b/
+          add_assets() {  # $1 = leg dir
+            cp -R "$1/themes" b/ 2>/dev/null || true
+            cp "$1/yazi-icons.toml" b/ 2>/dev/null || true
+            for f in README.md LICENSE LICENSE.txt gpl-3.0.txt; do
+              [ -f "$1/$f" ] && cp "$1/$f" b/ || true
+            done
+          }
+          add_portal() {  # daemon + glue live only in the wayland artifact
+            cp linux-wayland/exrawk-portal b/ && chmod +x b/exrawk-portal
+            mkdir -p b/portal && cp -R linux-wayland/portal/. b/portal/
+          }
+
+          # wayland: app-only, then layer the portal on top for the full bundle
+          rm -rf b && mkdir -p b
+          cp "linux-wayland/$N-wayland" b/ && chmod +x "b/$N-wayland"
+          add_assets linux-wayland
+          tar -C b -cJf "$N-$VER-wayland-app.tar.xz" .
+          add_portal
+          tar -C b -cJf "$N-$VER-wayland-full.tar.xz" .
+
+          # x11: same pattern
+          rm -rf b && mkdir -p b
+          cp "linux-x11/$N" b/ && chmod +x "b/$N"
+          add_assets linux-x11
+          tar -C b -cJf "$N-$VER-x11-app.tar.xz" .
+          add_portal
+          tar -C b -cJf "$N-$VER-x11-full.tar.xz" .
 
       - name: Create release
         env:
@@ -203,9 +218,10 @@ jobs:
           fi
           VER="${{ inputs.version }}"; VER="${VER#v}"
           gh release create "${{ inputs.version }}" \
-              "${PROJECT_NAME}-linux-x11.zip" \
-              "${PROJECT_NAME}-linux-wayland.zip" \
-              "${PROJECT_NAME}-${VER}-linux.tar.xz" \
+              "${PROJECT_NAME}-${VER}-wayland-full.tar.xz" \
+              "${PROJECT_NAME}-${VER}-wayland-app.tar.xz" \
+              "${PROJECT_NAME}-${VER}-x11-full.tar.xz" \
+              "${PROJECT_NAME}-${VER}-x11-app.tar.xz" \
               --repo "${{ github.repository }}" \
               --title "${{ inputs.version }}" \
               --notes "${{ inputs.notes }}" \

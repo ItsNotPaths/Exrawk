@@ -17,7 +17,9 @@ short_desc="Yazi-style file explorer + XDG file-chooser portal (rawk suite)"
 maintainer="Paths <IsItPaths@gmail.com>"
 license="GPL-3.0-only"
 homepage="https://github.com/ItsNotPaths/Exrawk"
-distfiles="${homepage}/releases/download/v${version}/Exrawk-${version}-linux.tar.xz"
+# Wayland bundle (the unrawk overlay is Wayland). For an X11 overlay, swap to
+# Exrawk-${version}-x11-full.tar.xz and the Exrawk-wayland refs below to Exrawk.
+distfiles="${homepage}/releases/download/${version}/Exrawk-${version}-wayland-full.tar.xz"
 checksum=0000000000000000000000000000000000000000000000000000000000000000
 
 # Prebuilt binaries: skip the shlib rdep scan and name runtime deps directly.
@@ -33,13 +35,13 @@ do_install() {
 	# suite. getAppDir() resolves through the /usr/bin symlinks back to here,
 	# so themes/ and yazi-icons.toml are found with no config tweak.
 	vmkdir opt/Exrawk
-	install -m755 Exrawk Exrawk-wayland exrawk-portal "${DESTDIR}/opt/Exrawk/"
+	install -m755 Exrawk-wayland exrawk-portal "${DESTDIR}/opt/Exrawk/"
 	vcopy themes opt/Exrawk
 	install -m644 yazi-icons.toml "${DESTDIR}/opt/Exrawk/"
 
-	# PATH entry points.
+	# PATH entry points (both names resolve to the bundled wayland binary).
 	vmkdir usr/bin
-	ln -sf /opt/Exrawk/Exrawk         "${DESTDIR}/usr/bin/Exrawk"
+	ln -sf /opt/Exrawk/Exrawk-wayland "${DESTDIR}/usr/bin/Exrawk"
 	ln -sf /opt/Exrawk/Exrawk-wayland "${DESTDIR}/usr/bin/Exrawk-wayland"
 
 	# XDG portal backend registration.
